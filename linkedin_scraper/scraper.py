@@ -5,4 +5,3 @@ from lxml import html
 from selenium import webdriver
 import re
 import os
-
