@@ -8,6 +8,18 @@ from .objects import Scraper
 from .person import Person
 import time
 import os
+import sqlite3
+import pandas as pd
+
+
+conn = sqlite3.connect("linkedIn_Companies.db")
+cur = conn.cursor()
+cur.execute("PRAGMA foreign_keys = ON")
+
+#creating table2 with employee info tied to each company_name
+#need to do an if statment here
+
+
 
 class CompanySummary(object):
     linkedin_url = None
@@ -38,7 +50,7 @@ class Company(Scraper):
     showcase_pages =[]
     affiliated_companies = []
 
-    def __init__(self, linkedin_url = None, name = None, about_us =None, website = None, headquarters = None, founded = None, company_type = None, company_size = None, specialties = None, showcase_pages =[], affiliated_companies = [], driver = None, scrape = True, get_employees = True, close_on_complete = True):
+    def __init__(self, linkedin_url = None, name = None, about_us =None, website = None, headquarters = None, founded = None, company_type = None, company_size = None, specialties = None, showcase_pages =[], affiliated_companies = [], driver = None, scrape = True, get_employees = True, close_on_complete = False):
         self.linkedin_url = linkedin_url
         self.name = name
         self.about_us = about_us
@@ -66,36 +78,158 @@ class Company(Scraper):
         self.driver = driver
 
         if scrape:
-            self.scrape(get_employees=get_employees, close_on_complete=close_on_complete)
+            self.scrape(get_employees=True, close_on_complete=False)
 
-    def __get_text_under_subtitle(self, elem):
-        return "\n".join(elem.text.split("\n")[1:])
+    ### REMOVED def __get_text_under_subtitle(self, elem): ###
+    ### REMOVED  __get_text_under_subtitle_by_class(self, driver, class_name): ###
 
-    def __get_text_under_subtitle_by_class(self, driver, class_name):
-        return self.__get_text_under_subtitle(driver.find_element_by_class_name(class_name))
 
-    def scrape(self, get_employees = True, close_on_complete = True):
+    def scrape(self, get_employees = True, close_on_complete = False):
         if self.is_signed_in():
             self.scrape_logged_in(get_employees = get_employees, close_on_complete = close_on_complete)
         else:
             self.scrape_not_logged_in(get_employees = get_employees, close_on_complete = close_on_complete)
 
     def __parse_employee__(self, employee_raw):
-        try:
-            return Person(
-                linkedin_url = employee_raw.find_element_by_class_name("search-result__result-link").get_attribute("href"),
-                name = employee_raw.find_elements_by_class_name("search-result__result-link")[1].text.encode('utf-8').strip(),
-                driver = self.driver,
-                get = False,
-                scrape = False
-                )
-        except:
-            return None
+        driver = self.driver
+        #try:
+        print("Found them! Let's parse...\n")
+        linkedin_url = employee_raw.find_element_by_class_name("search-result__result-link").get_attribute("href")
+        name = employee_raw.find_elements_by_class_name("search-result__result-link")[1].text
+
+
+        # GETTING PROFILE PICTURE AND NAME
+
+        profile_picture_name = employee_raw.find_elements_by_class_name("search-result__image")[0].text
+        xCodeURL = ("//div[@aria-label=" + "'" + str(profile_picture_name) + "'" + "]")
+
+        # This locates the correct DOM element using XPATH, the aria-label class, and the employee name
+        if profile_picture_name != "":
+
+            print("Company name: " + str(self.name))
+            print("Name: " + profile_picture_name + "\n")
+            print("LinkedIn_url: " + linkedin_url + "\n")
+
+
+            attribute = employee_raw.find_element_by_xpath(str(xCodeURL))
+
+            ##### PROFILE PICTURE URL ######
+            #this gets the style attribute of the div
+            print("Profile Picture URL: ")
+
+            if attribute.get_attribute("style"):
+                attribute_2 = attribute.get_attribute("style")
+                #just getting url
+                profile_picture_url = attribute_2.split(' url("')[1].replace('");', '')
+                print(profile_picture_url + "\n")
+            #Just incase there is an XPATH issue OR there is no profile picture, it gets set to n/a in database
+            else:
+                print("Error: couldn't find DOM element...maybe no profile picture")
+                profile_picture_url = "n/a"
+
+
+            # GETS ROLE and LOCATION
+
+            #need to add if Headline, if not headline
+            elements = employee_raw.find_elements_by_tag_name("p")
+
+            print("length of elements: " + str(len(elements)))
+
+            if len(elements) == 3:
+                print("This is the first element (skip): ")
+                print(elements[0].text)
+                print("\n")
+
+                print("This is the second element, the location: ")
+                location = elements[1].text
+                print(location)
+                print("\n")
+
+
+                print("This is the third element, the role: ")
+                role = elements[2].text
+                #role= role.split(' :("')[1].replace('");', '')
+                print(role)
+                print("\n")
+
+            else:
+                print("This is the first element, the role: ")
+                role = elements[0].text
+                print(role)
+                print("\n")
+
+                print("This is the second element, the location: ")
+                location = elements[1].text
+                print(location)
+                print("\n")
+
+            company_name = self.name
+            cursor = cur.execute("SELECT * FROM company_info WHERE company_name=?", (company_name,))
+            record = cursor.fetchone()
+            company_id = record[0]
+            print("and here is company_id: " + str(record[0]))
+
+
+
+            print("company id for " + str(self.name) + ":" + str(company_id))
+
+            cur.execute("INSERT INTO employee_info VALUES(NULL, ?, ?, ?, ?, ?);", (company_id, profile_picture_name, profile_picture_url, location, role,))
+            conn.commit()
+
+
+
+
+        # PRIVATE ACCOUNT DON'T ADD TO DATABASE
+        else:
+            print("This employee has no name!")
+            print("LinkedIn_url: " + linkedin_url + "\n")
+            print("Moving on...")
+
+
 
     def get_employees(self, wait_time=10):
+
+        conn = sqlite3.connect("linkedIn_Companies.db")
+        cur = conn.cursor()
+        cur.execute("PRAGMA foreign_keys = ON")
+
+        #### CHECKING SQLITE FOR COMPANY NAME ####
+        company_name = self.name
+        print("Checking database for company name...")
+
+        cursor = cur.execute("SELECT EXISTS(SELECT 1 FROM company_info WHERE company_name=? LIMIT 1)", (company_name,))
+        record = cursor.fetchone()
+        if record[0] == 1:
+            print("Company_name already exists!... this is it: ")
+            print(self.name)
+
+            cursor = cur.execute("SELECT * FROM company_info WHERE company_name=?", (company_name,))
+            record = cursor.fetchone()
+            company_id = record[0]
+            print("Company ID: " + str(record[0]))
+
+            ### todo RETURN INFO ###
+            print(pd.read_sql_query("SELECT * FROM employee_info WHERE company_id={0}".format(company_id), conn))
+            return
+
+        print("New company found... adding to database now...\n")
+        company_name = self.name
+
+        print("Name not in table, adding company to database")
+        cur.execute("INSERT INTO company_info VALUES(NULL , ?);", (company_name,))
+        conn.commit()
+
+        print("company successfully added... now let's add employees")
+        print("Okay getting employees...\n")
         driver = self.driver
 
-        see_all_employees = driver.find_element_by_xpath('//span[@data-control-name="topcard_see_all_employees"]')
+        try:
+            see_all_employees = driver.find_element_by_xpath('//span[@data-control-name="topcard_see_all_employees"]')
+
+        except:
+            print("Sorry, this company has hidden their employee list.")
+            return
+
         driver.get(see_all_employees.find_elements_by_css_selector("*")[0].get_attribute("href"))
 
         _ = WebDriverWait(driver, wait_time).until(EC.presence_of_element_located((By.CLASS_NAME, "results-list")))
@@ -107,7 +241,8 @@ class Company(Scraper):
         results_list = driver.find_element_by_class_name("results-list")
         results_li = results_list.find_elements_by_tag_name("li")
         for res in results_li:
-            total.append(self.__parse_employee__(res))
+            self.__parse_employee__(res)
+
 
         while self.__find_element_by_class_name__("next"):
             driver.find_element_by_class_name("next").click()
@@ -131,7 +266,7 @@ class Company(Scraper):
 
 
 
-    def scrape_logged_in(self, get_employees = True, close_on_complete = True):
+    def scrape_logged_in(self, get_employees = True, close_on_complete = False):
         driver = self.driver
 
         driver.get(self.linkedin_url)
@@ -139,14 +274,16 @@ class Company(Scraper):
         _ = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.CLASS_NAME, 'nav-main__content')))
         _ = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, '//h1[@dir="ltr"]')))
 
-        self.name = driver.find_element_by_xpath('//h1[@dir="ltr"]').text.encode('utf-8').strip()
-        self.about_us = driver.find_element_by_class_name("org-about-us-organization-description__text").text.encode('utf-8').strip()
+        self.name = driver.find_element_by_xpath('//h1[@dir="ltr"]').text
 
-        self.specialties = "\n".join(driver.find_element_by_class_name("org-about-company-module__specialities").text.encode('utf-8').strip().split(", "))
-        self.website = driver.find_element_by_class_name("org-about-us-company-module__website").text.encode('utf-8').strip()
-        self.headquarters = driver.find_element_by_class_name("org-about-company-module__headquarters").text.encode('utf-8').strip()
-        self.industry = driver.find_element_by_class_name("company-industries").text.encode('utf-8').strip()
-        self.company_size = driver.find_element_by_class_name("org-about-company-module__company-staff-count-range").text.encode('utf-8').strip()
+
+        self.about_us = driver.find_element_by_class_name("org-about-us-organization-description__text").text
+
+        self.specialties = "\n".join(driver.find_element_by_class_name("org-about-company-module__specialities").text.split(", "))
+        self.website = driver.find_element_by_class_name("org-about-us-company-module__website").text
+        self.headquarters = driver.find_element_by_class_name("org-about-company-module__headquarters").text
+        self.industry = driver.find_element_by_class_name("company-industries").text
+        self.company_size = driver.find_element_by_class_name("org-about-company-module__company-staff-count-range").text
 
         driver.execute_script("window.scrollTo(0, Math.ceil(document.body.scrollHeight/2));")
 
@@ -160,8 +297,8 @@ class Company(Scraper):
             for showcase_company in showcase.find_elements_by_class_name("org-company-card"):
                 companySummary = CompanySummary(
                         linkedin_url = showcase_company.find_element_by_class_name("company-name-link").get_attribute("href"),
-                        name = showcase_company.find_element_by_class_name("company-name-link").text.encode('utf-8').strip(),
-                        followers = showcase_company.find_element_by_class_name("company-followers-count").text.encode('utf-8').strip()
+                        name = showcase_company.find_element_by_class_name("company-name-link").text,
+                        followers = showcase_company.find_element_by_class_name("company-followers-count").text
                     )
                 self.showcase_pages.append(companySummary)
 
@@ -170,8 +307,8 @@ class Company(Scraper):
             for affiliated_company in showcase.find_elements_by_class_name("org-company-card"):
                 companySummary = CompanySummary(
                          linkedin_url = affiliated_company.find_element_by_class_name("company-name-link").get_attribute("href"),
-                        name = affiliated_company.find_element_by_class_name("company-name-link").text.encode('utf-8').strip(),
-                        followers = affiliated_company.find_element_by_class_name("company-followers-count").text.encode('utf-8').strip()
+                        name = affiliated_company.find_element_by_class_name("company-name-link").text,
+                        followers = affiliated_company.find_element_by_class_name("company-followers-count").text
                         )
                 self.affiliated_companies.append(companySummary)
 
@@ -186,64 +323,7 @@ class Company(Scraper):
         if close_on_complete:
             driver.close()
 
-    def scrape_not_logged_in(self, close_on_complete = True, retry_limit = 10, get_employees = True):
-        driver = self.driver
-        retry_times = 0
-        while self.is_signed_in() and retry_times <= retry_limit:
-            page = driver.get(self.linkedin_url)
-            retry_times = retry_times + 1
-
-        self.name = driver.find_element_by_class_name("name").text.encode('utf-8').strip()
-
-        self.about_us = driver.find_element_by_class_name("basic-info-description").text.encode('utf-8').strip()
-        self.specialties = self.__get_text_under_subtitle_by_class(driver, "specialties")
-        self.website = self.__get_text_under_subtitle_by_class(driver, "website")
-        self.headquarters = driver.find_element_by_class_name("adr").text.encode('utf-8').strip()
-        self.industry = driver.find_element_by_class_name("industry").text.encode('utf-8').strip()
-        self.company_size = driver.find_element_by_class_name("company-size").text.encode('utf-8').strip()
-        self.company_type = self.__get_text_under_subtitle_by_class(driver, "type")
-        self.founded = self.__get_text_under_subtitle_by_class(driver, "founded")
-
-        # get showcase
-        try:
-            driver.find_element_by_id("view-other-showcase-pages-dialog").click()
-            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.ID, 'dialog')))
-
-            showcase_pages = driver.find_elements_by_class_name("company-showcase-pages")[1]
-            for showcase_company in showcase_pages.find_elements_by_tag_name("li"):
-                name_elem = showcase_company.find_element_by_class_name("name")
-                companySummary = CompanySummary(
-                    linkedin_url = name_elem.find_element_by_tag_name("a").get_attribute("href"),
-                    name = name_elem.text.encode('utf-8').strip(),
-                    followers = showcase_company.text.encode('utf-8').strip().split("\n")[1]
-                )
-                self.showcase_pages.append(companySummary)
-            driver.find_element_by_class_name("dialog-close").click()
-        except:
-            pass
-
-        # affiliated company
-        try:
-            affiliated_pages = driver.find_element_by_class_name("affiliated-companies")
-            for i, affiliated_page in enumerate(affiliated_pages.find_elements_by_class_name("affiliated-company-name")):
-                if i % 3 == 0:
-                    affiliated_pages.find_element_by_class_name("carousel-control-next").click()
-
-                companySummary = CompanySummary(
-                    linkedin_url = affiliated_page.find_element_by_tag_name("a").get_attribute("href"),
-                    name = affiliated_page.text.encode('utf-8').strip()
-                )
-                self.affiliated_companies.append(companySummary)
-        except:
-            pass
-
-        if get_employees:
-            self.get_employees()
-
-        driver.get(self.linkedin_url)
-
-        if close_on_complete:
-            driver.close()
+    #### REMOVED if_not_logged_in_function for now ####
 
     def __repr__(self):
         return """
